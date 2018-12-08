@@ -1,0 +1,418 @@
+//----------------------------------------------------------------------------------------------
+//
+//	SCRIPT:			icQRbuildSpine.mel
+//
+//	AUTHOR:			Ingo Clemens
+//					www.braverabbit.de
+//					
+//	DATE:			Jan 08, 2015
+//					created: Jun 14, 2011
+//
+//----------------------------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------------------------
+//
+//	USE AND MODIFY AT YOUR OWN RISK!!
+//
+//----------------------------------------------------------------------------------------------
+
+
+//----------------------------------------------------------------------------------------------
+//
+// builds a spine based on the given joint chain
+//
+//----------------------------------------------------------------------------------------------
+
+
+global proc icQRbuildSpine ( string $charName, string $root )
+{
+	global string $gSelect;
+	setToolTo $gSelect;
+
+	string $rootJoint = `rename $root ("root_jnt" + $charName)`;
+	string $joints[] = `listRelatives -c -ad $rootJoint`;
+
+	int $counter = size($joints);
+	for ($j = 0; $j < size($joints); $j ++)
+	{
+		$joints[$j] = `rename $joints[$j] ("spine" + $counter + "_jnt" + $charName)`;
+		$counter --;
+	}
+	
+	float $pos[];
+	
+	//create the FK back joints
+	string $FKspineFront1Joint = "FK_spine_front1_jnt" + $charName;
+	string $FKspineFront2Joint = "FK_spine_front2_jnt" + $charName;
+	string $FKspineFront3Joint = "FK_spine_front3_jnt" + $charName;
+	string $FKspineBack1Joint = "FK_spine_back1_jnt" + $charName;
+	string $FKspineBack2Joint = "FK_spine_back2_jnt" + $charName;
+
+	$pos = `xform -q -ws -rp $rootJoint`;
+	joint -n $FKspineBack2Joint;
+	move -a $pos[0] $pos[1] $pos[2] $FKspineBack2Joint;
+	select -cl;
+	
+	$pos = `xform -q -ws -rp $joints[0]`;
+	joint -n $FKspineFront3Joint;
+	move -a $pos[0] $pos[1] $pos[2] $FKspineFront3Joint;
+	select -cl;
+	
+	joint -n $FKspineBack1Joint;
+	string $const[] = `pointConstraint $FKspineBack2Joint $FKspineFront3Joint $FKspineBack1Joint`;
+	setAttr ($const[0] + ".w0") 3.5;
+	delete $const[0];
+	select -cl;
+	
+	rename (`duplicate -rr -rc $FKspineBack1Joint`) $FKspineFront1Joint;
+	select -cl;
+	
+	joint -n $FKspineFront2Joint;
+	$const = `pointConstraint $FKspineBack2Joint $FKspineFront3Joint $FKspineFront2Joint`;
+	setAttr ($const[0] + ".w1") 1.1;
+	delete $const[0];
+	select -cl;
+	
+
+	parent $FKspineBack2Joint $FKspineBack1Joint;
+	parent $FKspineFront3Joint $FKspineFront2Joint;
+	parent $FKspineFront2Joint $FKspineFront1Joint;
+	
+	//create the spline ik bind joints
+	string $bindJoint1 = "spine_IK_bind_jnt1" + $charName;
+	string $bindJoint2 = "spine_IK_bind_jnt2" + $charName;
+	string $bindJoint3 = "spine_IK_bind_jnt3" + $charName;
+
+	select -cl;
+	joint -n $bindJoint1;
+	delete (`pointConstraint $rootJoint $bindJoint1`);
+	select -cl;
+	joint -n $bindJoint3;
+	delete (`pointConstraint $joints[0] $bindJoint3`);
+	select -cl;
+	joint -n $bindJoint2;
+	
+	//create the spline ik
+	string $ikHandle = "spine_IKhandle" + $charName;
+	string $ikItems[] = `ikHandle -n $ikHandle -sol "ikSplineSolver"
+									-ccv 1 -scv 1 -roc 1 -tws "linear" -pcv 0 -ns 1
+									-sj $rootJoint -ee $joints[0]`;
+	rename $ikItems[1] ("spine_IKeffector" + $charName);
+	string $spineCurve = `rename $ikItems[2] ("spine_curve" + $charName)`;
+	
+	//create the controls
+	float $userScale = `intField -q -v QRheight`;
+	string $hipCtrl = "pelvis_ctrl" + $charName;
+	string $torsoCtrl = "torso_ctrl" + $charName;
+	string $shoulderCtrl = "shoulder_ctrl" + $charName;
+	string $fkBackCtrl1 = "fkBack1_ctrl" + $charName;
+	string $fkBackCtrl2 = "fkBack2_ctrl" + $charName;
+	string $fkBackCtrl3 = "fkBack3_ctrl" + $charName;
+	circle -c 0 0 0 -nr 0 0 1 -sw 360 -r ($userScale / 4.0) -d 3 -ut 0 -tol 0.01 -s 12 -ch 0 -n $hipCtrl;
+	circle -c 0 0 0 -nr 0 0 1 -sw 360 -r ($userScale / 4.5) -d 3 -ut 0 -tol 0.01 -s 12 -ch 0 -n $torsoCtrl;
+	circle -c 0 0 0 -nr 0 0 1 -sw 360 -r ($userScale / 4.0) -d 3 -ut 0 -tol 0.01 -s 12 -ch 0 -n $shoulderCtrl;
+	circle -c 0 0 0 -nr 0 0 1 -sw 360 -r ($userScale / 5.0) -d 3 -ut 0 -tol 0.01 -s 12 -ch 0 -n $fkBackCtrl1;
+	circle -c 0 0 0 -nr 0 0 1 -sw 360 -r ($userScale / 5.0) -d 3 -ut 0 -tol 0.01 -s 12 -ch 0 -n $fkBackCtrl2;
+	circle -c 0 0 0 -nr 0 0 1 -sw 360 -r ($userScale / 5.0) -d 3 -ut 0 -tol 0.01 -s 12 -ch 0 -n $fkBackCtrl3;
+
+	setAttr ($hipCtrl + ".rotateOrder") 2;
+	setAttr ($torsoCtrl + ".rotateOrder") 2;
+	setAttr ($shoulderCtrl + ".rotateOrder") 2;
+	setAttr ($fkBackCtrl1 + ".rotateOrder") 2;
+	setAttr ($fkBackCtrl2 + ".rotateOrder") 2;
+	setAttr ($fkBackCtrl3 + ".rotateOrder") 2;
+
+	delete (`pointConstraint $rootJoint $hipCtrl`);
+	delete (`pointConstraint $joints[0] $shoulderCtrl`);
+
+	//get the average position of the middle CVs of the spine curve to position the torso control
+	select $spineCurve;
+	selectCurveCV("all");
+	string $sel[] = `ls -sl -fl`;
+	float $pos1[] = `xform -q -ws -t $sel[1]`;
+	float $pos2[] = `xform -q -ws -t $sel[2]`;
+	
+	move -a -ws (($pos1[0] + $pos2[0]) / 2) (($pos1[1] + $pos2[1]) / 2) (($pos1[2] + $pos2[2]) / 2) $torsoCtrl;
+	select -cl;
+	//position the middle bind joint at the same position
+	delete (`pointConstraint $torsoCtrl $bindJoint2`);
+
+	$const = `pointConstraint $torsoCtrl $shoulderCtrl $fkBackCtrl3`;
+	setAttr ($const[0] + ".w0") 3;
+	delete $const[0];
+	select -r $hipCtrl;
+	select -add $torsoCtrl;
+	select -add $fkBackCtrl1;
+	$const = `pointConstraint $hipCtrl $torsoCtrl $fkBackCtrl1`;
+	setAttr ($const[0] + ".w0") 2;
+	delete $const[0] ;
+	select -r $hipCtrl;
+	select -add $torsoCtrl;
+	select -add $fkBackCtrl2;
+	$const = `pointConstraint $hipCtrl $torsoCtrl $fkBackCtrl2`;
+	setAttr ($const[0] + ".w1") 1.5;
+	delete $const[0];
+
+	$bodyCurvePoints = {0.3, 0.3, 0.0, 0.3, 1.4, 0.0, 1.0, 1.4, 0.0,
+					0.0, 3.0, 0.0, -1.0, 1.4, 0.0, -0.3, 1.4, 0.0,
+					-0.3, 0.3, 0.0, -1.4, 0.3, 0.0, -1.4, 1.0, 0.0,
+					-3.0, 0.0, 0.0, -1.4, -1.0, 0.0, -1.4, -0.3, 0.0,
+					-0.3, -0.3, 0.0, -0.3, -0.3, -1.4, -0.7, -0.7, -1.4,
+					0.0, 0.0, -3.0, 0.7, 0.7, -1.4, 0.3, 0.3, -1.4,
+					0.3, 0.3, 0.0, 1.4, 0.3, 0.0, 1.4, 1.0, 0.0,
+					3.0, 0.0, 0.0, 1.4, -1.0, 0.0, 1.4, -0.3, 0.0,
+					0.3, -0.3, 0.0, 0.3, -1.4, 0.0, 1.0, -1.4, 0.0,
+					0.0, -3.0, 0.0, -1.0, -1.4, 0.0, -0.3, -1.4, 0.0,
+					-0.3, -0.3, 0.0, -0.3, -0.3, 1.4, -0.7, -0.7, 1.4,
+					0.0, 0.0, 3.0, 0.7, 0.7, 1.4, 0.3, 0.3, 1.4,
+					0.3, 0.3, 0.0};
+
+	string $bodyCtrl = "body_ctrl" + $charName;
+	icQRbuildCurve ( $bodyCurvePoints, 1, ($userScale / 20.0), $bodyCtrl );
+	//circle -c 0 0 0 -nr 0 0 1 -sw 360 -r 5 -d 3 -ut 0 -tol 0.01 -s 12 -ch 0 -n $bodyCtrl;
+	delete (`pointConstraint $FKspineBack1Joint $bodyCtrl`);
+	makeIdentity -a 1 -t 1 -r 1 -s 1 $bodyCtrl;
+
+	addAttr -ln "controls" -k 1 -at "enum" -en "-:" $bodyCtrl;
+	setAttr -l 1 ($bodyCtrl + ".controls");
+	addAttr -ln "show_FK" -k 1 -at "enum" -en "off:on:" $bodyCtrl;
+	addAttr -ln "show_IK" -k 1 -at "enum" -en "off:on:" $bodyCtrl;
+
+	//orient the fk controls to the fk joints
+	delete (`orientConstraint $FKspineBack1Joint $fkBackCtrl1`);
+	delete (`orientConstraint $FKspineFront1Joint $fkBackCtrl2`);
+	delete (`orientConstraint $FKspineFront2Joint $fkBackCtrl3`);
+
+	//group each control to zero it and and make it constrainable
+	string $hipCtrlGrp = icQRgroupControl( $charName, "pelvis_ctrl");
+	string $torsoCtrlGrp = icQRgroupControl( $charName, "torso_ctrl");
+	
+	//duplicate the torso group for making it the constraining driver for the torso control
+	string $torsoConstGrp1 = "torso_constGrp1" + $charName;
+	string $torsoConstGrp2 = "torso_constGrp2" + $charName;
+	rename (`duplicate $torsoCtrl`) $torsoConstGrp1;
+	rename (`duplicate $torsoCtrl`) $torsoConstGrp2;
+	delete (`listRelatives -s $torsoConstGrp1`);
+	delete (`listRelatives -s $torsoConstGrp2`);
+	
+	//continue with the control grouping
+	string $shoulderCtrlGrp = icQRgroupControl( $charName, "shoulder_ctrl");
+	string $FKbackCtrlGrp1 = icQRgroupControl( $charName, "fkBack1_ctrl");
+	string $FKbackCtrlGrp2 = icQRgroupControl( $charName, "fkBack2_ctrl");
+	string $FKbackCtrlGrp3 = icQRgroupControl( $charName, "fkBack3_ctrl");
+	
+	//parent the torso const groups to the hip and shoulder control
+	parent $torsoConstGrp1 $hipCtrl;
+	parent $torsoConstGrp2 $shoulderCtrl;
+	pointConstraint -mo $torsoConstGrp1 $torsoConstGrp2 $torsoCtrlGrp;
+	
+	//bind the spline curve to the bind joints
+	select -r $bindJoint1 ;
+	select -add $bindJoint2 ;
+	select -add $bindJoint3 ;
+	select -add $spineCurve;
+	string $flags = "-omi true -dr 4 -rui true";
+	if (`getApplicationVersionAsFloat` < 2009)
+		$flags = "-dr 4";
+	string $cmd = "newSkinCluster \"-toSelectedBones -mi 2 " + $flags + "\"";
+	eval($cmd);
+	//print ($cmd + "\n");
+	
+	string $conn[] = `listConnections -s 0 -d 1 $bindJoint1`;
+	$conn = stringArrayRemoveDuplicates ($conn);
+	for ($c in $conn)
+	{
+		if (`gmatch $c "*bindPose*"`) rename $c ("bindPose_spine" + $charName);
+		else if (`gmatch $c "*skinCluster*"`) rename $c ("skinCluster_spine" + $charName);
+	}
+	$conn = `listConnections -s 0 -d 1 ("skinCluster_spine" + $charName)`;
+	$conn = stringArrayRemoveDuplicates ($conn);
+	for ($c in $conn)
+	{
+		if (`gmatch $c "*skinCluster*"`) rename $c ("spine_skinClusterSet" + $charName);
+	}
+	string $shape[] = `listRelatives -s $spineCurve`;
+	rename (`listConnections ($shape[0] + ".tweakLocation")`) ("tweak_spine" + $charName);
+
+	//build the stretchy spine
+	string $jointString = $rootJoint;
+	for ($j = size($joints) - 1; $j >= 0; $j --)
+	{
+		$jointString = $jointString + ":" + $joints[$j];
+	}
+	string $stretchVolNode[] = icQRbuildStretch ( "spine", $spineCurve, $jointString, $charName );
+	//create custom attributes to control the spine and root volume
+	addAttr -ln "stretchVolume" -k 1 -at "enum" -en "-:" $bodyCtrl;
+	setAttr -l 1 ($bodyCtrl + ".stretchVolume");
+	addAttr -ln "root" -at "float" -min -1 -max 0 -dv -0.3 -k 1 $bodyCtrl;
+	addAttr -ln "spine" -at "float" -min 0 -max 1 -dv 1 -k 1 $bodyCtrl;
+	//connect the attributes with the corresponding control nodes
+	connectAttr ($bodyCtrl + ".spine") ($stretchVolNode[0] + ".ab");
+	connectAttr ($bodyCtrl + ".root") ($stretchVolNode[1] + ".i2x");
+	icQRlockHideAttr ( $stretchVolNode[0], "ab" );
+	icQRlockHideAttr ( $stretchVolNode[1], "i1x,i1y,i1z,i2x,i2y,i2z" );
+	setAttr -l 0 ("charScale_spineCurve_compensate_mult" + $charName + ".input2X");
+	connectAttr -f ("characterScale_grp" + $charName + ".rescale") ("charScale_spineCurve_compensate_mult" + $charName + ".input2X");
+	setAttr -l 1 ("charScale_spineCurve_compensate_mult" + $charName + ".input2X");
+	setAttr -l 0 ("charScale_spine_compensate_mult" + $charName + ".input2X");
+	connectAttr -f ("characterScale_grp" + $charName + ".rescale") ("charScale_spine_compensate_mult" + $charName + ".input2X");
+	setAttr -l 1 ("charScale_spine_compensate_mult" + $charName + ".input2X");
+
+	icQRshowStretch $hipCtrl ("spineStretchFactor_mult" + $charName);
+	icQRshowStretch $torsoCtrl ("spineStretchFactor_mult" + $charName);
+	icQRshowStretch $shoulderCtrl ("spineStretchFactor_mult" + $charName);
+
+	parent $bindJoint1 $hipCtrl;
+	parent $bindJoint3 $shoulderCtrl;
+	parent $bindJoint2 $torsoCtrl;
+	
+	//move the FK control pivots to the FK joints
+	$pos = `xform -q -ws -rp $FKspineBack1Joint`;
+	move $pos[0] $pos[1] $pos[2] ($fkBackCtrl1 + ".scalePivot") ($fkBackCtrl1 + ".rotatePivot");
+	$pos = `xform -q -ws -rp $FKspineFront1Joint`;
+	move $pos[0] $pos[1] $pos[2] ($fkBackCtrl2 + ".scalePivot") ($fkBackCtrl2 + ".rotatePivot");
+	$pos = `xform -q -ws -rp $FKspineFront2Joint`;
+	move $pos[0] $pos[1] $pos[2] ($fkBackCtrl3 + ".scalePivot") ($fkBackCtrl3 + ".rotatePivot");
+	
+	//parent constrain the hip and shoulder control to the corresponding FK joints
+	parentConstraint -mo $FKspineFront3Joint $shoulderCtrlGrp;
+	parentConstraint -mo $FKspineBack2Joint $hipCtrlGrp;
+	
+	//connect the FK controls with the FK joints
+	connectAttr -f ($fkBackCtrl1 + ".r") ($FKspineBack1Joint + ".r");
+	connectAttr -f ($fkBackCtrl2 + ".r") ($FKspineFront1Joint + ".r");
+	connectAttr -f ($fkBackCtrl3 + ".r") ($FKspineFront2Joint + ".r");
+
+	//enable the advanced twist and make the connections to the controls
+	connectAttr ($hipCtrl + "Shape.worldMatrix[0]") ($ikHandle + ".dWorldUpMatrix");
+	connectAttr ($shoulderCtrl + "Shape.worldMatrix[0]") ($ikHandle + ".dWorldUpMatrixEnd");
+	setAttr ($ikHandle + ".dTwistControlEnable") 1;
+	setAttr ($ikHandle + ".dWorldUpType") 4;
+	
+	//create a group for the FK joints
+	string $FKspineJointsGrp = `createNode transform -n ("FK_spine_joints_grp" + $charName)`;
+	delete (`pointConstraint $FKspineBack1Joint $FKspineJointsGrp`);
+	parent $FKspineBack1Joint $FKspineFront1Joint $FKspineJointsGrp;
+	parentConstraint -mo $bodyCtrl $FKspineJointsGrp;
+	
+	//parenting and grouping
+	icQRcreateGroup ( $charName, "spine_controls_grp", 1 );
+	icQRcreateGroup ( $charName, "animationControls_grp", 1 );
+	string $spineControlsGrp = "spine_controls_grp" + $charName;
+	string $animationControlsGrp = "animationControls_grp" + $charName;
+	parent $bodyCtrl $spineControlsGrp;
+	parent $hipCtrlGrp $bodyCtrl;
+	parent $torsoCtrlGrp $bodyCtrl;
+	parent $shoulderCtrlGrp $bodyCtrl;
+	parent $FKbackCtrlGrp1 $bodyCtrl;
+	parent $FKbackCtrlGrp2 $bodyCtrl;
+	parent $FKbackCtrlGrp3 $bodyCtrl;
+	icQRcreateGroup ( $charName, "dontTouchJoints_grp", 1 );
+	icQRcreateGroup ( $charName, "spineJoints_grp", 1 );
+	string $dontTouchJointsGrp = "dontTouchJoints_grp" + $charName;
+	string $spineJointsGrp = "spineJoints_grp" + $charName;
+	parent $spineJointsGrp $dontTouchJointsGrp;
+	parent $rootJoint $spineJointsGrp;
+	parent $FKspineJointsGrp $spineJointsGrp;
+	icQRcreateGroup ( $charName, "dontTouch_grp", 1 );
+	parent $spineCurve ("dontTouch_grp" + $charName);
+	parent $ikHandle ("dontTouch_grp" + $charName);
+	
+	icQRcreateGroup ( $charName, "character_grp", 1 );
+	parent ("characterScale_grp" + $charName) ("character_grp" + $charName);
+	parent $animationControlsGrp ("characterScale_grp" + $charName);
+	parent $spineControlsGrp $animationControlsGrp;
+	parent $dontTouchJointsGrp ("characterScale_grp" + $charName);
+	parent ("dontTouch_grp" + $charName) ("characterScale_grp" + $charName);
+
+	//add the neck attributes
+	addAttr -ln "neck_status" -k 1 -at "enum" -en "IK:FK:" $shoulderCtrl;
+	setAttr ($shoulderCtrl + ".neck_status") 1;
+	addAttr -ln "neckFollow" -at "float" -min 0 -max 1 -dv 0 -k 1 $shoulderCtrl;
+	addAttr -ln "tailFollow" -at "float" -min 0 -max 1 -dv 0 -k 1 $hipCtrl;
+
+	//cleanup
+	setAttr ($spineCurve + ".v") 0;
+	setAttr ($ikHandle + ".v") 0;
+	setAttr ($FKspineJointsGrp + ".v") 0;
+	setAttr ($bindJoint1 + ".v") 0;
+	setAttr ($bindJoint2 + ".v") 0;
+	setAttr ($bindJoint3 + ".v") 0;
+	
+	icQRlockHideAttr ( $spineCurve, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $ikHandle, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v,pvx,pvy,pvz,off,rol,twi,ikb" );
+	icQRlockHideAttr ( ($FKspineJointsGrp + "_parentConstraint1"), "nodeState,int,w0" );
+	icQRlockHideAttr ( ("spine_IKeffector" + $charName), "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $bodyCtrl, "sx,sy,sz,v" );
+	icQRlockHideAttr ( $hipCtrlGrp, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $torsoCtrlGrp, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $shoulderCtrlGrp, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $FKbackCtrlGrp1, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $FKbackCtrlGrp2, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $FKbackCtrlGrp3, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $FKspineJointsGrp, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	
+	icQRlockHideAttr ( $hipCtrl, "sx,sy,sz,v" );
+	icQRlockHideAttr ( $torsoCtrl, "rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $shoulderCtrl, "sx,sy,sz,v" );
+	icQRlockHideAttr ( $fkBackCtrl1, "tx,ty,tz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $fkBackCtrl2, "tx,ty,tz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $fkBackCtrl3, "tx,ty,tz,sx,sy,sz,v" );
+	
+	icQRlockHideAttr ( $torsoConstGrp1, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $torsoConstGrp2, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $bindJoint1, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $bindJoint2, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $bindJoint3, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	
+	icQRlockHideAttr ( ($hipCtrlGrp + "_parentConstraint1"), "nodeState,int,w0" );
+	icQRlockHideAttr ( ($torsoCtrlGrp + "_pointConstraint1"), "nodeState,offsetX,offsetY,offsetZ,w0,w1" );
+	icQRlockHideAttr ( ($shoulderCtrlGrp + "_parentConstraint1"), "nodeState,int,w0" );
+	
+	icQRlockHideAttr ( $bindJoint1, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $bindJoint2, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $bindJoint3, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	
+	string $objectsToLayer[] = {$bodyCtrl,$hipCtrl,$torsoCtrl,$shoulderCtrl};
+	icQRcontrolSet ( $charName, ("controls_set_" + $charName), $objectsToLayer, 0, 1, 0 );
+	icQRdisplayOverride ( $objectsToLayer, 0, 1, 22 );
+	icQRcreateCharSet ( $charName, "body_cs", 1 , $objectsToLayer );
+	
+	$objectsToLayer = {$fkBackCtrl1,$fkBackCtrl2,$fkBackCtrl3};
+	icQRcontrolSet ( $charName, ("controls_set_" + $charName), $objectsToLayer, 0, 1, 0 );
+	icQRdisplayOverride ( $objectsToLayer, 0, 1, 21 );
+	icQRcreateCharSet ( $charName, "body_cs", 1 , $objectsToLayer );
+	
+	//the joints
+	clear $objectsToLayer;
+	$objectsToLayer = {$bindJoint1,$bindJoint2,$bindJoint3,$FKspineBack1Joint,$FKspineBack2Joint,$FKspineFront1Joint,$FKspineFront2Joint,$FKspineFront3Joint};
+	icQRcontrolSet ( $charName, ("dontTouch_set_" + $charName), $objectsToLayer, 2, 1, 3 );
+	
+	clear $objectsToLayer;
+	$objectsToLayer = $joints;
+	$objectsToLayer[size($objectsToLayer)] = $rootJoint;
+	$objectsToLayer = `icQRreverseArray $objectsToLayer`;
+	icQRcontrolSet ( $charName, ("spine_skinJoints_set_" + $charName), $objectsToLayer, 2, 1, 3 );
+
+	//connect the fk controls with the visibility switch
+	connectAttr -f ($bodyCtrl + ".show_FK") ($fkBackCtrl1 + ".overrideVisibility");
+	connectAttr -f ($bodyCtrl + ".show_FK") ($fkBackCtrl2 + ".overrideVisibility");
+	connectAttr -f ($bodyCtrl + ".show_FK") ($fkBackCtrl3 + ".overrideVisibility");
+	connectAttr -f ($bodyCtrl + ".show_IK") ($hipCtrl + ".overrideVisibility");
+	connectAttr -f ($bodyCtrl + ".show_IK") ($torsoCtrl + ".overrideVisibility");
+	connectAttr -f ($bodyCtrl + ".show_IK") ($shoulderCtrl + ".overrideVisibility");
+	setAttr ($bodyCtrl + ".show_FK") 0;
+	setAttr ($bodyCtrl + ".show_IK") 1;
+
+	//add the pickwalking attributes for the controls
+	icQRpickWalkSetup ( $fkBackCtrl3 + "," + $fkBackCtrl2 + "," + $fkBackCtrl1 );
+	icQRpickWalkSetup ( $shoulderCtrl + "," + $torsoCtrl + "," + $hipCtrl + "," + $bodyCtrl );
+
+	icQRaddDefaultAttr $fkBackCtrl1;
+	icQRaddDefaultAttr $fkBackCtrl2;
+	icQRaddDefaultAttr $fkBackCtrl3;
+	icQRaddDefaultAttr $hipCtrl;
+	icQRaddDefaultAttr $torsoCtrl;
+	icQRaddDefaultAttr $shoulderCtrl;
+	icQRaddDefaultAttr $bodyCtrl;
+}

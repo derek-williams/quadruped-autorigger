@@ -1,0 +1,443 @@
+//----------------------------------------------------------------------------------------------
+//
+//	SCRIPT:			icQRbuildRigUtilities.mel
+//
+//	AUTHOR:			Ingo Clemens
+//					www.braverabbit.de
+//
+//	DATE:			Jan 08, 2015
+//					created: Jan 02, 2005
+//
+//----------------------------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------------------------
+//
+//	USE AND MODIFY AT YOUR OWN RISK!!
+//
+//----------------------------------------------------------------------------------------------
+
+
+//----------------------------------------------------------------------------------------------
+//
+// reverse the given array
+//
+//----------------------------------------------------------------------------------------------
+
+global proc string[] icQRreverseArray ( string $list[] )
+{
+	string $return[];
+
+	for ($i = size($list) - 1; $i >= 0; $i --)
+	{
+		$return[size($return)] = $list[$i];
+	}
+
+	return $return;
+}
+
+//----------------------------------------------------------------------------------------------
+//
+// remove the joint radius attribute from the channel box of all joints
+//
+//----------------------------------------------------------------------------------------------
+
+global proc icQRremoveJointRadius ( string $charName )
+{
+	string $allJoints[] = `ls -type joint`;
+	for ($j in $allJoints)
+	{
+		if (`gmatch $j ("*" + $charName + "*")`)
+		{
+			setAttr ($j + ".radius") 1;
+			setAttr -cb 0 ($j + ".radius");
+		}
+	}
+}
+
+//----------------------------------------------------------------------------------------------
+//
+// adds the selected objects to a new or existing set
+//
+//----------------------------------------------------------------------------------------------
+
+global proc icQRcontrolSet ( string $charName, string $setName, string $nodes[],
+							int $dis, int $vis, int $clr )
+{
+	//check if the set exists
+	if (!`objExists $setName`)
+	{
+		//clear any selection so that an empty set is created
+		select -cl;
+		sets -n $setName;
+	}
+
+	//add the selected nodes to the set
+	for ($item in $nodes)
+	{
+		sets -e -fe $setName $item;
+
+		//and set the display attributes
+		setAttr ($item + ".overrideEnabled") 1;
+		setAttr ($item + ".overrideDisplayType") $dis;
+		setAttr ($item + ".overrideVisibility") $vis;
+		setAttr ($item + ".overrideColor") $clr;		
+	}
+
+	//create a master set if it doesn't exist
+	if (!`objExists ("controlSets_" + $charName)`)
+	{
+		//clear any selection so that an empty set is created
+		select -cl;
+		sets -n ("controlSets_" + $charName);
+	}
+	//add the new control set to the master set
+	sets -e -fe ("controlSets_" + $charName) $setName;
+}
+
+//----------------------------------------------------------------------------------------------
+//
+// groups a control to itself to zero it out
+//
+//----------------------------------------------------------------------------------------------
+
+global proc string icQRgroupControl ( string $charName, string $ctrlName )
+{
+	string $duplicate[] = `duplicate ($ctrlName + $charName)`;
+	delete (`listRelatives -s $duplicate[0]`);
+	rename $duplicate[0] ($ctrlName + "_grp" + $charName);
+	parent ($ctrlName + $charName) ($ctrlName + "_grp" + $charName);
+	return ($ctrlName + "_grp" + $charName);
+}
+
+global proc icQRpickWalkToggle ()
+{
+	string $userCmdName;
+	assignCommand -e -suc;
+	int $cmdCount = `assignCommand -q -num`;
+	int $exists = 0;
+
+	//initialize the pickwalking procedure
+	//source "quadrupedRigger/icCRpickWalk.mel";
+
+	//when executing the script for the first time create environment variables
+	if (!`optionVar -ex "icQRpickWalkSwitch"`)
+	{
+		//if the environment variable is not present the pick walk commands might not exist
+		//check if this is true; in this case create the commands
+		for ($i = 1; $i <= $cmdCount; $i ++)
+		{
+			$userCmdName = `assignCommand -q -n $i`;
+			if ($userCmdName == "quadRigPickWalkLeft" || $userCmdName == "quadRigPickWalkRight" ||
+				$userCmdName == "quadRigPickWalkUp" || $userCmdName == "quadRigPickWalkDown")
+			{
+				$exists = 1;
+			}
+		}
+
+		if ($exists == 0)
+		{
+			icQRcreateNameCommands;
+		}
+
+		optionVar -iv "icQRpickWalkSwitch" 0;
+		icQRtoggleExecute;
+	}
+	else
+	{
+		//if the environment variable already exists but the name commands have been deleted
+		//they need to be created again
+		for ($i = 1; $i <= $cmdCount; $i ++)
+		{
+			$userCmdName = `assignCommand -q -n $i`;
+			if ($userCmdName == "quadRigPickWalkLeft")
+			{
+				$exists = 1;
+				icQRtoggleExecute;
+			}
+		}
+		if ($exists == 0)
+		{
+			optionVar -rm "icQRpickWalkSwitch";
+			icQRpickWalkToggle;
+		}
+	}
+}
+
+//----------------------------------------------------------------------------------------------
+//
+// creates a stretch attribute and connects it to the stretch factor multiplier node
+//
+//----------------------------------------------------------------------------------------------
+
+global proc icQRshowStretch ( string $ctrl, string $factorNode )
+{
+	addAttr -ln "stretch" -at "float" -dv 0 -k 1 $ctrl;
+	connectAttr -f ($factorNode + ".outputX") ($ctrl + ".stretch");
+	setAttr -l 1 ($ctrl + ".stretch");
+}
+
+//----------------------------------------------------------------------------------------------
+//
+// builds a twist setup for the given joint chain
+//
+//----------------------------------------------------------------------------------------------
+
+global proc icQRbuildLegTwist ( string $joint1, string $joint2, 
+								string $twist1, string $twist2, string $twist4,
+								string $charName, string $side, string $part )
+{
+	string $upVectorGrp = ($side + $part + "Twist_upVectorGrp" + $charName);
+	string $upVectorCtrl = ($side + $part + "Twist_upVectorCtrl" + $charName);
+	string $twistGrp = ($side + $part + "Twist_grp" + $charName);
+	string $aimConstGrp = ($side + $part + "Twist_aimConstGrp" + $charName);
+
+	//create an empty group
+	rename (`CreateEmptyGroup`) $twistGrp;
+	//temporarily point and orient constrain it to the first joint
+	delete(`pointConstraint $joint1 $twistGrp`);
+	delete(`orientConstraint $joint1 $twistGrp`);
+	//duplicate the group for the aim const group
+	rename (`duplicate $twistGrp`) $aimConstGrp;
+
+	//create an empty group for the up vector groups
+	//these are created separately to have a different orientation independet from the joint
+	rename (`CreateEmptyGroup`) $upVectorGrp;
+	delete(`pointConstraint $joint1 $upVectorGrp`);
+	//duplicate the group for the up vector control
+	rename (`duplicate $upVectorGrp`) $upVectorCtrl;
+	parent $upVectorGrp $twistGrp;
+	parent $upVectorCtrl $upVectorGrp;
+
+	float $pos[] = `getAttr ($twist2 + ".t")`;
+	if ($side == "L_") move -r -ls -wd 0 $pos[0] 0 $upVectorGrp;
+	else move -r -ls -wd 0 ($pos[0] * -1) 0 $upVectorGrp;
+
+	//parent the groups
+	parent $aimConstGrp $joint1;
+	parent $twist1 $aimConstGrp;
+	parent $twistGrp (`listRelatives -p $joint1`);
+
+	//create the aim constraint
+	string $aimConst[];
+	if ($side == "L_")
+	{
+		$aimConst = `aimConstraint -aim 1 0 0 -u 0 1 0 -wut "object" -wuo $upVectorCtrl $joint2 $aimConstGrp`;
+	}
+	else
+	{
+		$aimConst = `aimConstraint -aim -1 0 0 -u 0 1 0 -wut "object" -wuo $upVectorCtrl $joint2 $aimConstGrp`;
+	}		
+
+	//apply the constrained rotation to the twist joint
+	$twistMultNode = `shadingNode -au multiplyDivide`;
+	//substitute the name from the compensate mult node
+	$twistMultName = $side + $part + "TwistFraction_mult" + $charName;
+	$twistMultNode = `rename $twistMultNode $twistMultName`;
+	setAttr ($twistMultNode + ".operation") 2;
+	setAttr ($twistMultNode + ".input2X") -2;
+	connectAttr -f ($aimConstGrp + ".rx") ($twistMultNode + ".input1X");
+	connectAttr -f ($twistMultNode + ".outputX") ($twist2 + ".rx");
+	connectAttr -f ($twistMultNode + ".outputX") ($twist4 + ".rx");
+
+	//cleanup
+	icQRlockHideAttr ( $upVectorGrp, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $upVectorCtrl, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $twistGrp, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $aimConstGrp, "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $aimConst[0], "nodeState,offsetX,offsetY,offsetZ,w0" );
+	icQRlockHideAttr ( $twistMultNode, "i1x,i1y,i1z,i2x,i2y,i2z" );
+}
+
+//----------------------------------------------------------------------------------------------
+//
+// build the general leg stretch
+//
+//----------------------------------------------------------------------------------------------
+
+global proc string[] icQRbuildLimbStretch ( string $startJoint, string $midJoint, string $endJoint, 
+											string $twistJoint1, string $twistJoint2,
+											string $type, string $charSide, string $charName )
+{
+	string $distLocator[];
+	string $distanceTransNode[];
+	string $distanceShapeName[];
+	string $aimConst[];
+	string $wristAimConst[];
+	string $charScaleMultNode;
+	string $distanceNode;
+	string $prefix;
+	float $length;
+	float $lengthJoint1;
+	float $lengthJoint2;
+	float $lengthTwistJoint1;
+	float $lengthTwistJoint2;
+	int $vectorMultiply;
+
+	select -cl;
+
+	//build a prefix name from the character side and the limb part
+	$prefix = ($charSide + $type + "_");
+
+	//create the distance node and get all necessary information about it
+	//to avoid that locators are being reused during any other setup
+	//the locators are first setup in space before moved to the right positions
+	$distanceNode = `distanceDimension -sp 0 0 0 -ep 10 0 0`;
+
+	//get the distance locators
+	$distLocator = `listConnections -s 1 -d 0 $distanceNode`;
+	$distLocator[0] = `rename $distLocator[0]
+						($prefix + "stretchMeasureStart_loc" + $charName)`;
+	$distLocator[1] = `rename $distLocator[1]
+						($prefix + "stretchMeasureEnd_loc" + $charName)`;
+
+	//get the distance dimension transform node to hide its channels later
+	$distanceTransNode = `pickWalk -d "up" $distanceNode`;
+	//and rename the nodes
+	$distanceTransNode[0] = `rename $distanceTransNode[0]
+						($prefix + "stretchMeasure_dist" + $charName)`;
+	$distanceShapeName = `listRelatives -s $distanceTransNode[0]`;
+	$distanceNode = $distanceShapeName[0];
+
+	//position the locators at the start and end joints
+	delete (`pointConstraint $startJoint $distLocator[0]`);
+	delete (`pointConstraint $endJoint $distLocator[1]`);
+
+	$length = `getAttr ($distanceNode + ".distance")`;
+
+	$lengthJoint1 = `getAttr ($midJoint + ".tx")`;
+	$lengthJoint2 = `getAttr ($endJoint + ".tx")`;
+	$lengthTwistJoint1 = `getAttr ($twistJoint1 + ".tx")`;
+	$lengthTwistJoint2 = `getAttr ($twistJoint2 + ".tx")`;
+
+	//create a multiply node to compensate for changes in length of the distance node
+	//due to rescaling the character
+	$charScaleMultNode = `shadingNode -au multiplyDivide`;
+	$charScaleMultNode = `rename $charScaleMultNode ($prefix + "stretchCompensate_mult" + $charName)`;
+	setAttr ($charScaleMultNode + ".operation") 2;
+	//connect the measured distance with the first input
+	connectAttr -f ($distanceNode + ".distance") ($charScaleMultNode + ".input1X");
+	//the second input is reserved for the character scale
+	setAttr ($charScaleMultNode + ".input2X") 1;
+
+	//----------------------------------------------------------------------------------------
+	//
+	//create the stretchyness
+	//
+	//----------------------------------------------------------------------------------------
+
+	//find out if the aim axis is positive or negative
+	if ($lengthJoint1 < 0)
+	{
+		$vectorMultiply = -1;
+	}
+	else
+	{
+		$vectorMultiply = 1;
+	}
+
+	//set the set driven keys
+	string $nodeList[] = {$midJoint, $endJoint, $twistJoint1, $twistJoint2};
+	float $lengthList[] = {$lengthJoint1, $lengthJoint2, $lengthTwistJoint1, $lengthTwistJoint2};
+
+	for ($i = 0; $i < size($nodeList); $i ++)
+	{
+		setDrivenKeyframe 	-dv (($lengthJoint1 + $lengthJoint2) * $vectorMultiply) -v $lengthList[$i] -itt "clamped" -ott "clamped"
+							-cd ($charScaleMultNode + ".outputX") ($nodeList[$i] + ".tx");
+		setDrivenKeyframe 	-dv (($lengthJoint1 + $lengthJoint2) * $vectorMultiply * 2) -v ($lengthList[$i] * 2) -itt "clamped" -ott "clamped"
+							-cd ($charScaleMultNode + ".outputX") ($nodeList[$i] + ".tx");
+		
+		//setAttr ($nodeList[$i] + "_translateX.preInfinity") 1;
+		setAttr ($nodeList[$i] + "_translateX.postInfinity") 1;
+	}
+
+	//----------------------------------------------------------------------------------------
+	//
+	//cleanup
+	//
+	//----------------------------------------------------------------------------------------
+
+	setAttr ($distanceTransNode[0] + ".v") 0;
+	setAttr ($distLocator[0] + ".v") 0;
+	setAttr ($distLocator[1] + ".v") 0;
+
+	//lock and hide unnecessary channels
+
+	icQRlockHideAttr ( $distanceTransNode[0], "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+
+	//the multiply nodes
+	icQRlockHideAttr ( $charScaleMultNode, "i1x,i1y,i1z,i2x,i2y,i2z" );
+
+	string $returnString[] = {$distLocator[0], $distLocator[1], $distanceTransNode[0], $charScaleMultNode};
+
+	return $returnString;
+}
+
+//----------------------------------------------------------------------------------------------
+//
+// add a measurement to the character
+//
+//----------------------------------------------------------------------------------------------
+
+global proc icQRaddHeightInfo ( string $charName )
+{
+	string $heightLocator[];
+	string $heightTransNode[];
+	string $heightShapeName[];
+	string $heightNode;
+	float $heightEnd[];
+
+	//get the absolute position of the head top
+	if (`objExists ("shoulder_ctrl" + $charName)`)
+	{
+		$heightEnd = `xform -q -ws -t ("shoulder_ctrl" + $charName)`;
+	}
+	else
+	{
+		$heightEnd = {0,100,0};
+	}
+	//create distance node
+	$heightNode = `distanceDimension -sp 0 0 0 -ep 0 $heightEnd[1] 0`;
+	//get the distance locators
+	$heightLocator = `listConnections -s 1 -d 0 $heightNode`;
+	$heightLocator[0] = `rename $heightLocator[0] ("heightMeasureStart_loc" + $charName)`;
+	$heightLocator[1] = `rename $heightLocator[1] ("heightMeasureEnd_loc" + $charName)`;
+	//set the first locator back to 0
+	//marking the start point at 0 when creating the measure tool used a former locator at
+	//the world center as the starting point which is not meant to be
+	move -a -ws 0 0 0 $heightLocator[0];
+	//get the distance dimension transform node to hide its channels later
+	$heightTransNode = `pickWalk -d "up" $heightNode`;
+	//parent the distance node and locators to the don't touch group
+	parent $heightLocator[0] ("dontTouch_grp" + $charName);
+	parent $heightLocator[1] ("dontTouch_grp" + $charName);
+	parent $heightTransNode[0] ("dontTouch_grp" + $charName);
+	//rename the distance dimension node
+	$heightTransNode[0] = `rename $heightTransNode[0] ("heightMeasure_dist" + $charName)`;
+	$heightShapeName = `listRelatives -s $heightTransNode[0]`;
+	$heightNode = $heightShapeName[0];
+	//connect the distance info to a new attribute on the scale group
+	connectAttr -f ($heightNode + ".distance") ("characterScale_grp" + $charName + ".height");
+	setAttr -l 1 ("characterScale_grp" + $charName + ".height");
+
+	//----------------------------------------------------------------------------------------
+	//
+	//cleanup
+	//
+	//----------------------------------------------------------------------------------------
+
+	//
+	//set all control objects to invisible
+	//
+	setAttr ($heightLocator[0] + ".visibility") 0;
+	setAttr ($heightLocator[1] + ".visibility") 0;
+	setAttr ($heightTransNode[0] + ".visibility") 0;
+
+	//
+	//lock and hide unnecessary channels
+	//
+
+	//the distance nodes
+	icQRlockHideAttr ( $heightLocator[0], "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $heightLocator[1], "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+	icQRlockHideAttr ( $heightTransNode[0], "tx,ty,tz,rx,ry,rz,sx,sy,sz,v" );
+}
